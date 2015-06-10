@@ -184,7 +184,7 @@ float TsStreamRemuxer(char *in_filename, char *out_filename)
     AVPacket pkt;
     int ret, i;
 
-    char transition_file[50] = {0};
+    char transition_file[100] = {0};
     sprintf(transition_file, "%s%s", in_filename, ".h264");
 
     char h264_head[] = {0x00, 0x00, 0x00, 0x01};
@@ -436,7 +436,7 @@ float TsStreamRemuxer(char *in_filename, char *out_filename)
 
 end:
     avformat_close_input(&ifmt_ctx);
-//    remove(in_filename);
+    remove(in_filename);
     remove(transition_file);
 
     /* close output */
@@ -474,17 +474,28 @@ void *getVideo(void *)
     while(hm_Device_Info->onlineFlag)
     {
         i++;
-        char fileName[50] = {0};
-        char in_file[50] = {0};
-        char out_file[50] = {0};
+        char fileName[100] = {0};
+        char in_file[100] = {0};
+        char out_file[100] = {0};
 
         // 命名规则, videoPath + videoNamePrefix + deviceName + channelIndex + _ + fileIndex;
         // for example; /home/username/videoFolder/realVideo_Jinhua16_1
         sprintf(fileName, "%s%s%s%d%s%d", videoPath, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_", i);
         printf("Path is %s\n", fileName);
         CLIENT_SaveRealData(hm_Device_Info->channelHandle[reserveChannel],  fileName);     // 开始下载监控原始数据
+        sprintf(fileName, "%s%s%d%s", videoPath,  hm_Device_Info->devName, reserveChannel+1, ".m3u8");      // 生成流媒体索引文件       
 
-        sprintf(fileName, "%s%s%d%s", videoPath,  hm_Device_Info->devName, reserveChannel+1, ".m3u8");      // 生成流媒体索引文件
+        if(i > 1)
+        {
+            sprintf(in_file, "%s%s%s%d%s%d", videoPath, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_", i-1);
+            sprintf(out_file, "%s%s", in_file, ".ts");
+            ts_time = TsStreamRemuxer(in_file, out_file); // 返回ts片段的时间
+            if(ts_time <= 0.00)
+            {
+                printf("Transition error\n");
+            }
+        }
+
         if (i == 1)
         {
             if ((fp=fopen(fileName, "wb+")) == NULL )       // 打开并清空原文件
@@ -494,14 +505,14 @@ void *getVideo(void *)
             }
             else
             {
-                char context[100] = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-TARGETDURATION:15\n";
-                sprintf(reserveTsPart3, "%s%s%s", "#EXTINF:15,\n", m3u8Url, "videoForWait.ts\n");
+                char context[100] = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-TARGETDURATION:10\n";
+                sprintf(reserveTsPart3, "%s%s%s", "#EXTINF:7,\n", m3u8Url, "videoForWait.ts\n");
                 fputs(context, fp);
                 fputs(reserveTsPart3, fp);
                 fclose(fp);
             }
         }
-        else if(i > 2)
+        else if(i > 1)
         {
             if ((fp=fopen(fileName, "wb+")) == NULL )       // 打开并清空原文件
             {
@@ -512,8 +523,8 @@ void *getVideo(void *)
             {
                 strcpy(reserveTsPart1, reserveTsPart2);
                 strcpy(reserveTsPart2, reserveTsPart3);
-                sprintf(reserveTsPart3, "%s%.6f%s%s%s%s%d%s%d%s", "#EXTINF:", ts_time,  ",\n", m3u8Url, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_", i - 2, ".ts\n");
-                sprintf(m3u8ContextTitle, "%s%d%s", "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:", i-2, "\n#EXT-X-TARGETDURATION:15\n");
+                sprintf(reserveTsPart3, "%s%.6f%s%s%s%s%d%s%d%s", "#EXTINF:", ts_time,  ",\n", m3u8Url, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_", i - 1, ".ts\n");
+                sprintf(m3u8ContextTitle, "%s%d%s", "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:", i - 1, "\n#EXT-X-TARGETDURATION:10\n");
                 fputs(m3u8ContextTitle, fp);
                 fputs(reserveTsPart1, fp);
                 fputs(reserveTsPart2, fp);
@@ -521,20 +532,8 @@ void *getVideo(void *)
                 fclose(fp);
             }
             // 删除磁盘上的i-4号文件
-            sprintf(fileName, "%s%s%s%d%s%d%s", videoPath, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_", i - 5, ".ts");
+            sprintf(fileName, "%s%s%s%d%s%d%s", videoPath, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_", i - 4, ".ts");
             remove(fileName);
-        }
-
-        if(i > 1)
-        {
-            sprintf(in_file, "%s%s%s%d%s%d", videoPath, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_", i-1);
-            sprintf(out_file, "%s%s", in_file, ".ts");
-            // 何不让下面的函数返回ts片段的时间？
-            ts_time = TsStreamRemuxer(in_file, out_file);
-            if(ts_time <= 0.00)
-            {
-                printf("Transition error\n");
-            }
         }
 
         sleep(7);
@@ -572,7 +571,7 @@ int threadManage(int index, bool stopFlag)
             {
                 char context[100] = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-TARGETDURATION:10\n";
                 fputs(context, fp);
-                sprintf(context, "%s%s%s", "#EXTINF:15,\n", m3u8Url, "videoForWait.ts\n");
+                sprintf(context, "%s%s%s", "#EXTINF:7,\n", m3u8Url, "videoForWait.ts\n");
                 fputs(context, fp);
                 fclose(fp);
             }
