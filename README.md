@@ -1,4 +1,5 @@
 # HM_Monitor
+<<<<<<< HEAD
 
 # The first stage finished at 2015/06/11
 # The fowllowing progam is included in the main.cpp
@@ -12,3 +13,6 @@
 # 7. Add "EXT-X-VERSION:3" to m3u8 file.
 
 # There is no bug found until now.
+=======
+# 杭州慧牧科技有限公司HLS监控项目
+>>>>>>> a643143fabc5d18f9ef404c15f43f0d5f75d3292
