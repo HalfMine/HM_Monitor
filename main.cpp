@@ -218,7 +218,7 @@ float TsStreamRemuxer(char *in_filename, char *out_filename)
     while(seek_size < file_size)
     {
         fseek(p_in_file, seek_size, SEEK_SET);
-        buffer = (char*)malloc(sizeof(char) * 65535);
+        buffer = (char*)malloc(sizeof(char) * 65535 * 2);
         if(buffer == NULL)
         {
             printf("Memory error\n");
@@ -253,19 +253,19 @@ float TsStreamRemuxer(char *in_filename, char *out_filename)
         printf("The length is %X %X %X %X\n", buffer[15], buffer[14], buffer[13], buffer[12]);
         if(buffer[13] >= 0 && buffer[12] >= 0)
         {
-            dh_frame_size = buffer[13] * 0x0100 + buffer[12];
+            dh_frame_size = buffer[14] * 0x010000 + buffer[13] * 0x0100 + buffer[12];
         }
         else if(buffer[13] >= 0 && buffer[12] < 0)
         {
-            dh_frame_size = buffer[13] * 0x0100 + buffer[12] + 0x0100;
+            dh_frame_size = buffer[14] * 0x010000 + buffer[13] * 0x0100 + buffer[12] + 0x0100;
         }
         else if(buffer[13] < 0 && buffer[12] >= 0)
         {
-            dh_frame_size = (buffer[13] + 0x0100) * 0x0100 + buffer[12];
+            dh_frame_size = buffer[14] * 0x010000 + (buffer[13] + 0x0100) * 0x0100 + buffer[12];
         }
         else
         {
-            dh_frame_size = (buffer[13] + 0x0100)  * 0x0100 + buffer[12] + 0x0100;
+            dh_frame_size = buffer[14] * 0x010000 + (buffer[13] + 0x0100)  * 0x0100 + buffer[12] + 0x0100;
         }
 
         /* 查找264头 */
@@ -453,14 +453,14 @@ end:
     return ts_Duration;
 }
 
-void *getVideo(void *)
+void *getVideo(void *args)
 {
     unsigned int i = 0;
-    int reserveChannel = channel;       // 线程较多，channel 的值随时会变，故应及时接管
+    int reserveChannel = (int)(*((int*)args));
     char reserveTsPart1[100] = {0};     // 保留3个ts索引
     char reserveTsPart2[100] = {0};
     char reserveTsPart3[100] = {0};
-    char m3u8ContextTitle[100] = {0};
+    char m3u8ContextTitle[120] = {0};
     float ts_time = 0.00;
     FILE *fp;
     hm_Device_Info->channelHandle[reserveChannel] = CLIENT_RealPlay(hm_Device_Info->loginHandle, reserveChannel, NULL);   // get the channel from the other program
@@ -468,7 +468,7 @@ void *getVideo(void *)
     if (hm_Device_Info->channelHandle[reserveChannel] == 0)
     {
         printf("Failed to open the channel.\n");
-        return 0;
+        return NULL;
     }
 
     while(hm_Device_Info->onlineFlag)
@@ -490,7 +490,7 @@ void *getVideo(void *)
             sprintf(in_file, "%s%s%s%d%s%d", videoPath, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_", i-1);
             sprintf(out_file, "%s%s", in_file, ".ts");
             ts_time = TsStreamRemuxer(in_file, out_file); // 返回ts片段的时间
-            if(ts_time <= 0.00)
+            if(ts_time <= 0.00)                                       // 转换失败，路过该文件
             {
                 printf("Transition error\n");
             }
@@ -501,30 +501,80 @@ void *getVideo(void *)
             if ((fp=fopen(fileName, "wb+")) == NULL )       // 打开并清空原文件
             {
                 printf("Cannot open m3u8 file\n");
-                break;
+                CLIENT_StopSaveRealData(hm_Device_Info->channelHandle[reserveChannel]);
+                continue;
             }
             else
             {
-                char context[100] = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-TARGETDURATION:10\n";
-                sprintf(reserveTsPart3, "%s%s%s", "#EXTINF:7,\n", m3u8Url, "videoForWait.ts\n");
-                fputs(context, fp);
+//                char context[] = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-TARGETDURATION:7\n";
+                sprintf(reserveTsPart1, "%s%s%s", "#EXTINF:7.0000,\n", m3u8Url, "videoForWait.ts\n#EXT-X-DISCONTINUITY\n");
+                sprintf(reserveTsPart2, "%s%s%s%s%d%s", "#EXTINF:7.0000,\n", m3u8Url, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_1.ts\n");
+                sprintf(reserveTsPart3, "%s%s%s%s%d%s", "#EXTINF:7.0000,\n", m3u8Url, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_2.ts\n");
+                sprintf(m3u8ContextTitle, "%s", "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-DISCONTINUITY-SEQUENCE:0\n#EXT-X-TARGETDURATION:7\n");
+//                fputs(context, fp);
+                fputs(m3u8ContextTitle, fp);
+                fputs(reserveTsPart1, fp);
+                fputs(reserveTsPart2, fp);
                 fputs(reserveTsPart3, fp);
                 fclose(fp);
             }
         }
-        else if(i > 1)
+        else if (i == 2)
+        {
+            if ((fp=fopen(fileName, "wb+")) == NULL )       // 打开并清空原文件
+            {
+                printf("Cannot open m3u8 file\n");
+                CLIENT_StopSaveRealData(hm_Device_Info->channelHandle[reserveChannel]);
+                continue;
+            }
+            else
+            {
+                sprintf(reserveTsPart1, "%s%s%s", "#EXTINF:7.0000,\n", m3u8Url, "videoForWait.ts\n#EXT-X-DISCONTINUITY\n");
+                sprintf(reserveTsPart2, "%s%.4f%s%s%s%s%d%s", "#EXTINF:", ts_time,  ",\n", m3u8Url, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_1.ts\n");
+                sprintf(reserveTsPart3, "%s%s%s%s%d%s", "#EXTINF:7.0000,\n", m3u8Url, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_2.ts\n");
+                sprintf(m3u8ContextTitle, "%s", "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:1\n#EXT-X-DISCONTINUITY-SEQUENCE:0\n#EXT-X-TARGETDURATION:7\n");
+                fputs(m3u8ContextTitle, fp);
+                fputs(reserveTsPart1, fp);
+                fputs(reserveTsPart2, fp);
+                fputs(reserveTsPart3, fp);
+                fclose(fp);
+            }
+        }
+        else if (i == 3)
+        {
+            if ((fp=fopen(fileName, "wb+")) == NULL )       // 打开并清空原文件
+            {
+                printf("Cannot open m3u8 file\n");
+                CLIENT_StopSaveRealData(hm_Device_Info->channelHandle[reserveChannel]);
+                continue;
+            }
+            else
+            {
+                sprintf(reserveTsPart1, "%s%s%s", "#EXTINF:7.0000,\n", m3u8Url, "videoForWait.ts\n#EXT-X-DISCONTINUITY\n");
+                sprintf(reserveTsPart2, "%s%s%s%s%d%s", "#EXTINF:7.0000,\n", m3u8Url, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_1.ts\n");
+                sprintf(reserveTsPart3, "%s%.4f%s%s%s%s%d%s", "#EXTINF:", ts_time,  ",\n", m3u8Url, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_2.ts\n");
+                sprintf(m3u8ContextTitle, "%s", "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:2\n#EXT-X-DISCONTINUITY-SEQUENCE:0\n#EXT-X-TARGETDURATION:7\n");
+                fputs(m3u8ContextTitle, fp);
+                fputs(reserveTsPart1, fp);
+                fputs(reserveTsPart2, fp);
+                fputs(reserveTsPart3, fp);
+                fclose(fp);
+            }
+        }
+        else if (i > 3)
         {
             if ((fp=fopen(fileName, "wb+")) == NULL )       // 打开并清空原文件
             {
                 printf("Cannot open this file\n");
-                break;
+                CLIENT_StopSaveRealData(hm_Device_Info->channelHandle[reserveChannel]);
+                continue;
             }
             else
             {
                 strcpy(reserveTsPart1, reserveTsPart2);
                 strcpy(reserveTsPart2, reserveTsPart3);
-                sprintf(reserveTsPart3, "%s%.6f%s%s%s%s%d%s%d%s", "#EXTINF:", ts_time,  ",\n", m3u8Url, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_", i - 1, ".ts\n");
-                sprintf(m3u8ContextTitle, "%s%d%s", "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:", i - 1, "\n#EXT-X-TARGETDURATION:10\n");
+                sprintf(reserveTsPart3, "%s%.4f%s%s%s%s%d%s%d%s", "#EXTINF:", ts_time,  ",\n", m3u8Url, "realVideo_", hm_Device_Info->devName, reserveChannel+1, "_", i - 1, ".ts\n");
+                sprintf(m3u8ContextTitle, "%s%d%s", "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:", i - 1, "\n#EXT-X-DISCONTINUITY-SEQUENCE:1\n#EXT-X-TARGETDURATION:7\n");
                 fputs(m3u8ContextTitle, fp);
                 fputs(reserveTsPart1, fp);
                 fputs(reserveTsPart2, fp);
@@ -536,7 +586,7 @@ void *getVideo(void *)
             remove(fileName);
         }
 
-        sleep(7);
+        sleep(6);
 
         /* 停止下载监控原始数据 */
         CLIENT_StopSaveRealData(hm_Device_Info->channelHandle[reserveChannel]);
@@ -553,14 +603,15 @@ int threadManage(int index, bool stopFlag)
         if(stopFlag)
         {
             pthread_cancel(pthread[index]);
-            pthread_join(pthread[index], NULL);     // whether it cause a block than influence the others?
+            pthread_join(pthread[index], NULL);
 
             CLIENT_StopSaveRealData(hm_Device_Info->channelHandle[index]);  // 额外增加的停止下载功能，解决有时线程结束时下载末停止的问题
+            CLIENT_StopRealPlay(hm_Device_Info->channelHandle[index]);
             hm_Device_Info->channelHandle[index] = 0;
             pthread[index] = 0;
             channel = 0;
             // 线程结束后清空所选m3u8索引文件
-            char fileName[50] = {0};
+            char fileName[100] = {0};
             FILE *fp;
             sprintf(fileName, "%s%s%d%s", videoPath,  hm_Device_Info->devName, index+1, ".m3u8");      // 生成流媒体索引文件
             if ((fp=fopen(fileName, "wb+")) == NULL )       // 打开并清空原文件
@@ -569,9 +620,9 @@ int threadManage(int index, bool stopFlag)
             }
             else
             {
-                char context[100] = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-TARGETDURATION:10\n";
+                char context[120] = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-DISCONTINUITY-SEQUENCE:0\n#EXT-X-TARGETDURATION:7\n";
                 fputs(context, fp);
-                sprintf(context, "%s%s%s", "#EXTINF:7,\n", m3u8Url, "videoForWait.ts\n");
+                sprintf(context, "%s%s%s", "#EXTINF:7,\n", m3u8Url, "videoForWait.ts\n#EXT-X-DISCONTINUITY\n");
                 fputs(context, fp);
                 fclose(fp);
             }
@@ -580,7 +631,7 @@ int threadManage(int index, bool stopFlag)
     else if(!stopFlag)
     {
         channel = index;
-        pthread_create(&pthread[index], NULL, getVideo, NULL);
+        pthread_create(&pthread[index], NULL, getVideo, &index);
         printf("已经启动下载线程\n");
         sleep(1);
     }
@@ -648,10 +699,6 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-//    float test = TsStreamRemuxer(argv[1], argv[2]);
-//    printf("the ts duration is %.2f\n", test);
-//    return 0;
-
     CLIENT_Init(DisConnectFunc, 0);     // 初始化sdk
     CLIENT_SetAutoReconnect(AutoConnectFunc, 0);
 
@@ -675,7 +722,7 @@ int main(int argc, char *argv[])
     hm_Device_Info->loginHandle = CLIENT_Login(hm_Device_Info->devIp, hm_Device_Info->devPort, hm_Device_Info->devUser, hm_Device_Info->devPwd, &deviceInfo, &error);
 
     printf("The Device ID is %ld\n", hm_Device_Info->loginHandle);
-    if (0 == hm_Device_Info->loginHandle)
+    if (hm_Device_Info->loginHandle == 0)
     {
         ChangeLoginError(error , &hm_Device_Info->errorStr);
         printf("Connect Fail! The error id is %d\n", error);
