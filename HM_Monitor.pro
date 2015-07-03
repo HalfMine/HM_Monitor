@@ -16,4 +16,4 @@ unix: LIBS += -ldhnetsdk
 
 unix: LIBS += -L /usr/lib64/mysql -lmysqlclient
 
-unix: LIBS += -lavformat -lavcodec -lavutil
+unix: LIBS += -lavformat
